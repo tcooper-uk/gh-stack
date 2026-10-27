@@ -27,6 +27,7 @@ type rebaseOptions struct {
 	remote                    string
 	committerDateIsAuthorDate bool
 	acceptBaseChange          bool
+	baseRef                   string
 }
 
 type rebaseState struct {
@@ -76,6 +77,12 @@ Use --no-trunk to skip fetching and rebasing with the trunk branch.
 Only the inter-branch rebases are performed (branch 2 onto branch 1,
 branch 3 onto branch 2, etc.).
 
+Use --base-ref to rebase onto a tag or branch other than the head of the
+trunk, such as a "stable" tag that marks the last commit to pass CI. The
+ref is fetched from the remote and may move backwards. Local trunk is not
+updated, and pull requests still target the trunk branch. The default can
+be set with "git config gh-stack.base-ref <ref>".
+
 If GitHub retargeted the stack because its base branch was deleted, the
 stack is rebased onto the new base. Removing commits from an old base that
 did not merge requires confirmation, or --accept-base-change.`,
@@ -90,6 +97,9 @@ did not merge requires confirmation, or --accept-base-change.`,
 
   # Rebase stack branches without pulling from or rebasing with trunk
   $ gh stack rebase --no-trunk
+
+  # Rebase onto the "stable" tag instead of the trunk head
+  $ gh stack rebase --base-ref refs/tags/stable
 
   # Continue after resolving conflicts
   $ gh stack rebase --continue
@@ -109,6 +119,7 @@ did not merge requires confirmation, or --accept-base-change.`,
 	cmd.Flags().BoolVar(&opts.upstack, "upstack", false, "Only rebase branches from current branch to top")
 	cmd.Flags().BoolVar(&opts.noTrunk, "no-trunk", false, "Skip trunk — only rebase stack branches onto each other")
 	cmd.Flags().BoolVar(&opts.acceptBaseChange, "accept-base-change", false, "Rebase onto a retargeted base even if the old base did not merge")
+	cmd.Flags().StringVar(&opts.baseRef, "base-ref", "", "Tag or branch to rebase onto instead of the trunk head (defaults to git config gh-stack.base-ref)")
 	cmd.Flags().BoolVar(&opts.cont, "continue", false, "Continue rebase after resolving conflicts")
 	cmd.Flags().BoolVar(&opts.abort, "abort", false, "Abort rebase and restore all branches")
 	cmd.Flags().StringVar(&opts.remote, "remote", "", "Remote to fetch from (defaults to auto-detected remote)")
@@ -198,9 +209,18 @@ func runRebase(cfg *config.Config, opts *rebaseOptions) error {
 		return ErrSilent
 	}
 
+	if opts.noTrunk && opts.baseRef != "" {
+		cfg.Errorf("--base-ref cannot be combined with --no-trunk")
+		return ErrInvalidArgs
+	}
 	var trunk trunkTarget
 	var newBase, cutoff string
 	if !opts.noTrunk {
+		baseRef, err := effectiveBaseRef(opts.baseRef)
+		if err != nil {
+			cfg.Errorf("reading gh-stack.base-ref: %v", err)
+			return ErrSilent
+		}
 		// Resolve remote for fetch and trunk comparison
 		remote, err := pickRemote(cfg, anchor, opts.remote)
 		if err != nil {
@@ -231,12 +251,16 @@ func runRebase(cfg *config.Config, opts *rebaseOptions) error {
 			cfg.Errorf("%s", err)
 			return ErrSilent
 		}
-		trunk, err = resolveTrunkTarget(cfg, s, remote, currentBranch, trunkResolveOptions{Worktrees: ctx, Branch: newBase})
+		trunk, err = resolveTrunkTarget(cfg, s, remote, currentBranch, trunkResolveOptions{Worktrees: ctx, Branch: newBase, BaseRef: baseRef})
 		if err != nil {
 			return err
 		}
 		if newBase != "" {
 			if cutoff, err = retargetCutoff(cfg, s, trunk, planned, opts.acceptBaseChange); err != nil {
+				return err
+			}
+		} else if baseRef != "" && startIdx == 0 {
+			if cutoff, err = baseRefCutoff(cfg, s, trunk); err != nil {
 				return err
 			}
 		}

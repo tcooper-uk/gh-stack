@@ -29,6 +29,20 @@ var ErrRemoteBranchNotFound = errors.New("remote branch not found")
 // never classified as optional repository absence.
 var ErrNotInRepository = errors.New("not in a Git repository")
 
+// ErrRemoteRefNotFound indicates that a requested non-branch ref (such as a
+// tag) does not exist on the remote.
+var ErrRemoteRefNotFound = errors.New("remote ref not found")
+
+// RemoteRefKind classifies a name on a remote.
+type RemoteRefKind int
+
+const (
+	RemoteRefNone      RemoteRefKind = iota // neither a tag nor a branch
+	RemoteRefTag                            // refs/tags/<name>
+	RemoteRefBranch                         // refs/heads/<name>
+	RemoteRefAmbiguous                      // both a tag and a branch
+)
+
 // Ops defines the interface for git operations used by commands.
 // The package-level functions are the default production implementation.
 // Tests can substitute a mock via SetOps().
@@ -57,6 +71,9 @@ type Ops interface {
 	GetSavedRemote() (string, error)
 	SaveRemote(remote string) error
 	ClearRemote() error
+	ConfiguredBaseRef() (string, error)
+	ClassifyRemoteRef(remote, name string) (RemoteRefKind, error)
+	FetchTag(remote, tag string) error
 	RebaseOnto(newBase, oldBase, branch string, opts RebaseOpts) error
 	RebaseContinue(opts RebaseOpts) error
 	RebaseAbort() error
@@ -398,6 +415,66 @@ func (d *defaultOps) SaveRemote(remote string) error {
 
 func (d *defaultOps) ClearRemote() error {
 	return d.runSilent("config", "--unset", "gh-stack.remote")
+}
+
+// ConfiguredBaseRef returns the gh-stack.base-ref git config value, or "" when
+// it is unset.
+func (d *defaultOps) ConfiguredBaseRef() (string, error) {
+	out, err := d.run("config", "--get", "gh-stack.base-ref")
+	if err != nil {
+		var gitErr *cligit.GitError
+		if errors.As(err, &gitErr) && gitErr.ExitCode == 1 && gitErr.Stderr == "" {
+			return "", nil
+		}
+		return "", err
+	}
+	return out, nil
+}
+
+// ClassifyRemoteRef reports whether name exists on the remote as a tag, a
+// branch, both, or neither.
+func (d *defaultOps) ClassifyRemoteRef(remote, name string) (RemoteRefKind, error) {
+	tagRef, branchRef := "refs/tags/"+name, "refs/heads/"+name
+	out, err := d.run("ls-remote", "--refs", remote, tagRef, branchRef)
+	if err != nil {
+		return RemoteRefNone, err
+	}
+	var hasTag, hasBranch bool
+	for _, line := range strings.Split(out, "\n") {
+		// ls-remote patterns match any ref ending in the pattern, so compare
+		// the full ref name exactly.
+		_, ref, ok := strings.Cut(line, "\t")
+		switch {
+		case !ok:
+		case ref == tagRef:
+			hasTag = true
+		case ref == branchRef:
+			hasBranch = true
+		}
+	}
+	switch {
+	case hasTag && hasBranch:
+		return RemoteRefAmbiguous, nil
+	case hasTag:
+		return RemoteRefTag, nil
+	case hasBranch:
+		return RemoteRefBranch, nil
+	}
+	return RemoteRefNone, nil
+}
+
+// FetchTag fetches one tag into refs/tags, replacing a local tag of the same
+// name that points elsewhere. Moving tags such as "stable" are expected to be
+// force-updated.
+func (d *defaultOps) FetchTag(remote, tag string) error {
+	refspec := fmt.Sprintf("+refs/tags/%s:refs/tags/%s", tag, tag)
+	if err := d.runSilent("fetch", "--no-tags", remote, refspec); err != nil {
+		if isMissingRemoteRefError(err) {
+			return fmt.Errorf("%w: %s/%s", ErrRemoteRefNotFound, remote, tag)
+		}
+		return err
+	}
+	return nil
 }
 
 func (d *defaultOps) RebaseOnto(newBase, oldBase, branch string, opts RebaseOpts) error {

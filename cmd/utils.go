@@ -1270,6 +1270,7 @@ type trunkResolveOptions struct {
 	Worktrees *worktree.Context
 	Preflight func(string, bool) error
 	Branch    string // overrides the stack's trunk
+	BaseRef   string // tag or branch to rebase onto instead of the trunk head
 }
 
 func (t trunkTarget) Describe() string {
@@ -1294,6 +1295,12 @@ func resolveTrunkTarget(cfg *config.Config, s *stack.Stack, remote, currentBranc
 	}
 	if err := normalizeStackTrunk(cfg, s, remote); err != nil {
 		return trunkTarget{}, err
+	}
+	if opts.BaseRef != "" {
+		if opts.Branch == "" {
+			return resolveBaseRefTarget(cfg, s, remote, opts.BaseRef, preflight)
+		}
+		cfg.Warningf("Ignoring base ref %s: GitHub retargeted this stack to %s", opts.BaseRef, opts.Branch)
 	}
 	trunk := s.Trunk.Branch
 	if opts.Branch != "" {

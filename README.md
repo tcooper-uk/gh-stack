@@ -113,6 +113,36 @@ Navigation to a branch checked out elsewhere reports its path and fails without 
 
 Repositories created with `git init --separate-git-dir` support main-worktree invocation and main-owner discovery through an existing absolute or relative `core.worktree` backlink, including one stored in the main `config.worktree`. The discovery limitation is only linked-worktree invocation without a main-worktree backlink: an operation requiring that main owner fails with actionable guidance, while unaffected worktrees continue. An administration directory is never treated as a checkout destination.
 
+### Rebasing onto a stable ref
+
+By default, `rebase` and `sync` rebase the bottom of a stack onto the head of the trunk branch. Some teams keep a "known good" tag or branch behind the trunk head, such as a `stable` tag that is moved to each trunk commit once it passes CI, and start new work from there so a bad trunk commit does not break every new PR.
+
+Set a **base ref** to rebase onto that instead:
+
+```sh
+# Once per clone: use the stable tag for every stack
+git config gh-stack.base-ref refs/tags/stable
+
+gh stack init my-feature        # the first branch is created from the tag
+gh stack sync                   # fetches the tag and rebases the stack onto it
+gh stack submit                 # PRs still target the trunk branch
+
+# Or for a single run
+gh stack rebase --base-ref refs/tags/stable
+```
+
+The flag takes precedence over the config value. A base ref can be a full ref (`refs/tags/stable`, `refs/heads/stable`), a remote-qualified branch (`origin/stable`), or a bare name that exists on the remote as either a tag or a branch; if it is both, use the full ref.
+
+With a base ref:
+
+- The ref is fetched from the remote each time. A tag is force-updated, so a local tag of the same name is replaced.
+- The ref may move backwards, for example when `stable` is rolled back. The stack is moved onto the new position, and commits between the two are dropped from the stack.
+- Local trunk is not fast-forwarded, and pull requests still target the trunk branch.
+- If a PR in the stack has merged but its commit is not yet in the base ref, the remaining branches are still rebased onto the base ref. The merged change arrives once the ref catches up.
+- `gh stack modify` does not support base refs yet and stops while `gh-stack.base-ref` is set.
+
+Pull request CI usually runs on a merge of the PR with the current head of the trunk, so a bad trunk commit can still affect PR checks. A base ref changes what your branches are built on, not what CI merges them with.
+
 ## Commands
 
 ### `gh stack init`
@@ -134,6 +164,7 @@ Enables `git rerere` automatically so that conflict resolutions are remembered a
 | Flag | Description |
 |------|-------------|
 | `-b, --base <branch>` | Trunk branch for the stack (defaults to the repository's default branch) |
+| `--base-ref <ref>` | Tag or branch to start from instead of the trunk head (defaults to `git config gh-stack.base-ref`). See [Rebasing onto a stable ref](#rebasing-onto-a-stable-ref) |
 
 **Examples:**
 
@@ -255,6 +286,7 @@ If a rebase conflict occurs, the operation pauses and prints the conflicted file
 | `--downstack` | Only rebase branches from trunk to the current branch |
 | `--upstack` | Only rebase branches from the current branch to the top |
 | `--no-trunk` | Skip trunk — only rebase stack branches onto each other (no fetch, no trunk rebase) |
+| `--base-ref <ref>` | Tag or branch to rebase onto instead of the trunk head (defaults to `git config gh-stack.base-ref`). Cannot be combined with `--no-trunk`. See [Rebasing onto a stable ref](#rebasing-onto-a-stable-ref) |
 | `--continue` | Continue the rebase after resolving conflicts |
 | `--abort` | Abort the rebase and restore all branches to their pre-rebase state |
 | `--remote <name>` | Remote to fetch from (defaults to auto-detected remote) |
@@ -390,6 +422,7 @@ In a non-interactive terminal, a divergence aborts the sync (exit success) witho
 |------|-------------|
 | `--remote <name>` | Remote to fetch from and push to (defaults to auto-detected remote) |
 | `--prune` | Delete local branches for merged PRs |
+| `--base-ref <ref>` | Tag or branch to rebase onto instead of the trunk head (defaults to `git config gh-stack.base-ref`). Skips the trunk fast-forward. See [Rebasing onto a stable ref](#rebasing-onto-a-stable-ref) |
 | `--no-atomic` | Allow partial branch updates |
 
 **Examples:**

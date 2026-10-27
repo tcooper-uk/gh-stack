@@ -34,6 +34,9 @@ type MockOps struct {
 	GetSavedRemoteFn         func() (string, error)
 	SaveRemoteFn             func(string) error
 	ClearRemoteFn            func() error
+	ConfiguredBaseRefFn      func() (string, error)
+	ClassifyRemoteRefFn      func(string, string) (RemoteRefKind, error)
+	FetchTagFn               func(string, string) error
 	RebaseOntoFn             func(string, string, string, RebaseOpts) error
 	RebaseContinueFn         func(RebaseOpts) error
 	RebaseAbortFn            func() error
@@ -240,6 +243,27 @@ func (m *MockOps) SaveRemote(remote string) error {
 func (m *MockOps) ClearRemote() error {
 	if m.ClearRemoteFn != nil {
 		return m.ClearRemoteFn()
+	}
+	return nil
+}
+
+func (m *MockOps) ConfiguredBaseRef() (string, error) {
+	if m.ConfiguredBaseRefFn != nil {
+		return m.ConfiguredBaseRefFn()
+	}
+	return "", nil
+}
+
+func (m *MockOps) ClassifyRemoteRef(remote, name string) (RemoteRefKind, error) {
+	if m.ClassifyRemoteRefFn != nil {
+		return m.ClassifyRemoteRefFn(remote, name)
+	}
+	return RemoteRefBranch, nil
+}
+
+func (m *MockOps) FetchTag(remote, tag string) error {
+	if m.FetchTagFn != nil {
+		return m.FetchTagFn(remote, tag)
 	}
 	return nil
 }

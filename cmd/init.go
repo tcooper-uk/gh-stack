@@ -15,6 +15,7 @@ import (
 type initOptions struct {
 	branches     []string
 	base         string
+	baseRef      string
 	adopt        bool // deprecated, kept for backward compat
 	beforeCreate func(string) error
 }
@@ -32,7 +33,13 @@ command. Existing branches are adopted automatically; missing branches are
 created. By default, the first branch is based on the default branch, and
 each subsequent branch is based on the previous one.
 
-Use --base to specify a different trunk branch.`,
+Use --base to specify a different trunk branch.
+
+Use --base-ref to start from a tag or branch other than the head of the
+trunk, such as a "stable" tag that marks the last commit to pass CI. New
+branches are created from it, and later "rebase" and "sync" runs keep using
+it. Pull requests still target the trunk branch. The default can be set with
+"git config gh-stack.base-ref <ref>".`,
 		Example: `  # Create a stack with a new branch
   $ gh stack init my-feature
 
@@ -43,7 +50,10 @@ Use --base to specify a different trunk branch.`,
   $ gh stack init feat/auth feat/api feat/ui
 
   # Specify a different trunk branch
-  $ gh stack init --base develop my-feature`,
+  $ gh stack init --base develop my-feature
+
+  # Start from the "stable" tag instead of the trunk head
+  $ gh stack init --base-ref refs/tags/stable my-feature`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.branches = args
 			return runInit(cfg, opts)
@@ -51,6 +61,7 @@ Use --base to specify a different trunk branch.`,
 	}
 
 	cmd.Flags().StringVarP(&opts.base, "base", "b", "", "Trunk branch for stack (defaults to default branch)")
+	cmd.Flags().StringVar(&opts.baseRef, "base-ref", "", "Tag or branch to start from instead of the trunk head (defaults to git config gh-stack.base-ref)")
 	cmd.Flags().BoolVarP(&opts.adopt, "adopt", "a", false, "Deprecated: existing branches are now adopted automatically")
 	_ = cmd.Flags().MarkHidden("adopt")
 
@@ -142,6 +153,26 @@ func runInit(cfg *config.Config, opts *initOptions) error {
 		}
 	}
 	trunkRef := "refs/heads/" + trunk
+
+	// With a base ref, new branches start from it and bases are measured
+	// against it. Pull requests still target the trunk branch.
+	baseRef, err := effectiveBaseRef(opts.baseRef)
+	if err != nil {
+		cfg.Errorf("reading gh-stack.base-ref: %v", err)
+		return ErrSilent
+	}
+	if baseRef != "" {
+		remote, err := pickRemote(cfg, currentBranch, "")
+		if err != nil {
+			if !errors.Is(err, errInterrupt) {
+				cfg.Errorf("failed to resolve remote: %s", err)
+			}
+			return ErrSilent
+		}
+		if _, trunkRef, err = fetchBaseRef(cfg, remote, baseRef); err != nil {
+			return err
+		}
+	}
 
 	// --- Flag validation ---
 

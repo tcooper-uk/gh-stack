@@ -104,6 +104,12 @@ gh stack sync                   # fetch, reconcile with GitHub, rebase, push, re
 gh stack sync --prune           # also delete local branches for merged PRs
 ```
 
+If the repo keeps a "known good" tag or branch behind the trunk head (for example a `stable` tag),
+pass `--base-ref refs/tags/stable` to `init`, `rebase` or `sync`, or set it once with
+`git config gh-stack.base-ref refs/tags/stable`. The stack is then rebased onto that ref instead of
+the trunk head, the ref may move backwards, local trunk is not updated, and PRs still target the
+trunk. `modify` refuses to run while `gh-stack.base-ref` is set.
+
 Pruning never happens without `--prune` when non-interactive. If the local and remote stacks have
 diverged, `sync` prints both chains, makes no changes, and exits 0 with `Sync aborted` — see
 `references/troubleshooting.md`.

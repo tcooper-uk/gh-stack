@@ -20,6 +20,7 @@ type syncOptions struct {
 	prune            bool
 	acceptBaseChange bool
 	noAtomic         bool
+	baseRef          string
 }
 
 func SyncCmd(cfg *config.Config) *cobra.Command {
@@ -36,7 +37,9 @@ This command performs a safe synchronization:
   2. Reconciles the stack on GitHub with your local stack: pulls down
      branches for any PRs added to the stack on GitHub, or prompts you to
      resolve a divergence in an interactive terminal
-  3. Fast-forwards the trunk branch to match the remote
+  3. Fast-forwards the trunk branch to match the remote (or, with
+     --base-ref, fetches that tag or branch instead and leaves the trunk
+     alone)
   4. Cascade-rebases stack branches onto their updated parents
   5. Pushes all branches atomically by default, using --force-with-lease
      after a rebase
@@ -66,6 +69,11 @@ stack, while "Branches synced" means the branches were rebased and pushed
 but no remote stack object was created or updated (for example, when fewer
 than two PRs exist yet).
 
+Use --base-ref to rebase onto a tag or branch other than the head of the
+trunk, such as a "stable" tag that marks the last commit to pass CI. The ref
+may move backwards. Pull requests still target the trunk branch. The default
+can be set with "git config gh-stack.base-ref <ref>".
+
 If GitHub retargeted the stack because its base branch was deleted, sync
 rebases the stack onto the new base. Removing commits from an old base that
 did not merge requires confirmation, or --accept-base-change.
@@ -82,6 +90,7 @@ the first active branch in the stack, or the trunk if all are merged.`,
 	cmd.Flags().StringVar(&opts.remote, "remote", "", "Remote to fetch from and push to (defaults to auto-detected remote)")
 	cmd.Flags().BoolVar(&opts.prune, "prune", false, "Delete local branches for merged PRs")
 	cmd.Flags().BoolVar(&opts.acceptBaseChange, "accept-base-change", false, "Rebase onto a retargeted base even if the old base did not merge")
+	cmd.Flags().StringVar(&opts.baseRef, "base-ref", "", "Tag or branch to rebase onto instead of the trunk head (defaults to git config gh-stack.base-ref)")
 	cmd.Flags().BoolVar(&opts.noAtomic, "no-atomic", os.Getenv("GH_STACK_NO_ATOMIC") != "", "Disable atomic pushes (also set by GH_STACK_NO_ATOMIC)")
 
 	return cmd
@@ -176,9 +185,15 @@ func runSync(cfg *config.Config, opts *syncOptions) error {
 	planned := planFastForwardBranches(s, remote)
 
 	// --- Step 2: Resolve trunk ---
+	baseRef, err := effectiveBaseRef(opts.baseRef)
+	if err != nil {
+		cfg.Errorf("reading gh-stack.base-ref: %v", err)
+		return ErrSilent
+	}
 	trunk, err := resolveTrunkTarget(cfg, s, remote, currentBranch, trunkResolveOptions{
 		Worktrees: ctx,
 		Branch:    newBase,
+		BaseRef:   baseRef,
 		Preflight: func(sha string, moved bool) error {
 			var required []string
 			for _, forward := range planned {
@@ -200,6 +215,10 @@ func runSync(cfg *config.Config, opts *syncOptions) error {
 	var cutoff string
 	if newBase != "" {
 		if cutoff, err = retargetCutoff(cfg, s, trunk, planned, opts.acceptBaseChange); err != nil {
+			return err
+		}
+	} else if baseRef != "" {
+		if cutoff, err = baseRefCutoff(cfg, s, trunk); err != nil {
 			return err
 		}
 	}

@@ -1424,3 +1424,30 @@ func TestModifyTUI_DropThenFoldUpSkipsDroppedNeighbor(t *testing.T) {
 	assert.True(t, model.Nodes()[1].Removed)
 	assert.True(t, model.Nodes()[2].Removed)
 }
+
+func TestCheckModifyPreconditions_BaseRefConfigured(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeStackFile(t, tmpDir, stack.Stack{
+		Trunk:    stack.BranchRef{Branch: "main"},
+		Branches: []stack.BranchRef{{Branch: "b1"}},
+	})
+	mock := &git.MockOps{
+		GitDirFn:             func() (string, error) { return tmpDir, nil },
+		CurrentBranchFn:      func() (string, error) { return "b1", nil },
+		ConfiguredBaseRefFn:  func() (string, error) { return "refs/tags/stable", nil },
+		IsRebaseInProgressFn: func() (bool, error) { t.Fatal("must stop before touching git state"); return false, nil },
+	}
+	restore := git.SetOps(mock)
+	defer restore()
+
+	cfg, _, errR := config.NewTestConfig()
+	cfg.ForceInteractive = true
+
+	_, err := checkModifyPreconditions(cfg)
+	cfg.Out.Close()
+	cfg.Err.Close()
+	out, _ := io.ReadAll(errR)
+
+	assert.ErrorIs(t, err, ErrInvalidArgs)
+	assert.Contains(t, string(out), "gh-stack.base-ref is refs/tags/stable")
+}

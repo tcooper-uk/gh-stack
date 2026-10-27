@@ -313,6 +313,19 @@ func checkModifyPreconditions(cfg *config.Config) (*loadStackResult, error) {
 	gitDir := result.GitDir
 	s := result.Stack
 
+	// Modify identifies the base of the stack by the trunk branch name, so it
+	// would re-parent the bottom branch onto the trunk head, or reject a stack
+	// that sits on an older base ref, instead of keeping it on the base ref.
+	if baseRef, err := effectiveBaseRef(""); err != nil {
+		cfg.Errorf("reading gh-stack.base-ref: %v", err)
+		return nil, ErrSilent
+	} else if baseRef != "" {
+		cfg.Errorf("modify does not support base refs yet (gh-stack.base-ref is %s)", baseRef)
+		cfg.Printf("Unset it with `%s` to modify this stack",
+			cfg.ColorAccent("git config --unset gh-stack.base-ref"))
+		return nil, ErrInvalidArgs
+	}
+
 	// No existing modify state file
 	if err := checkNoModifyInProgress(cfg, gitDir); err != nil {
 		return nil, err

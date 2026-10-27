@@ -1917,3 +1917,104 @@ func TestIntegration_Push_FallsBackWithoutPushOptionSupport(t *testing.T) {
 	require.NoError(t, d.Push("origin", []string{"b1"}, true, true))
 	assert.Equal(t, gitExec(t, cloneDir, "rev-parse", "b1"), remoteBranchSHA(t, bareDir, "b1"))
 }
+
+// ---------------------------------------------------------------------------
+// Integration tests for base-ref support
+// ---------------------------------------------------------------------------
+
+func TestIntegration_ConfiguredBaseRef(t *testing.T) {
+	_, cloneDir := setupBareAndClone(t)
+	restore := withGitDir(t, cloneDir)
+	defer restore()
+
+	// Unset is not an error.
+	ref, err := ConfiguredBaseRef()
+	require.NoError(t, err)
+	assert.Empty(t, ref)
+
+	gitExec(t, cloneDir, "config", "gh-stack.base-ref", "refs/tags/stable")
+	ref, err = ConfiguredBaseRef()
+	require.NoError(t, err)
+	assert.Equal(t, "refs/tags/stable", ref)
+}
+
+func TestIntegration_ClassifyRemoteRef(t *testing.T) {
+	_, cloneDir := setupBareAndClone(t)
+	restore := withGitDir(t, cloneDir)
+	defer restore()
+
+	gitExec(t, cloneDir, "tag", "stable")
+	gitExec(t, cloneDir, "tag", "both")
+	gitExec(t, cloneDir, "tag", "nested/tag")
+	gitExec(t, cloneDir, "branch", "both")
+	gitExec(t, cloneDir, "branch", "release")
+	gitExec(t, cloneDir, "push", "origin", "refs/tags/stable", "refs/tags/both", "refs/tags/nested/tag", "refs/heads/both", "refs/heads/release")
+
+	tests := []struct {
+		name string
+		ref  string
+		want RemoteRefKind
+	}{
+		{"tag", "stable", RemoteRefTag},
+		{"branch", "release", RemoteRefBranch},
+		{"both a tag and a branch", "both", RemoteRefAmbiguous},
+		{"missing", "nope", RemoteRefNone},
+		// ls-remote patterns match any ref ending in the pattern; "tag" must
+		// not match refs/tags/nested/tag.
+		{"suffix of another ref", "tag", RemoteRefNone},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ClassifyRemoteRef("origin", tt.ref)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestIntegration_FetchTag_ForceUpdatesMovedTag(t *testing.T) {
+	_, cloneDir := setupBareAndClone(t)
+	restore := withGitDir(t, cloneDir)
+	defer restore()
+
+	first := gitExec(t, cloneDir, "rev-parse", "HEAD")
+	gitExec(t, cloneDir, "tag", "stable")
+	gitExec(t, cloneDir, "push", "origin", "refs/tags/stable")
+
+	// Another engineer's clone moves the tag forward, then back.
+	other := filepath.Join(t.TempDir(), "other")
+	gitExec(t, ".", "clone", gitExec(t, cloneDir, "remote", "get-url", "origin"), other)
+	gitExec(t, other, "config", "user.name", "Test")
+	gitExec(t, other, "config", "user.email", "test@test.com")
+	writeFile(t, other, "next.txt", "next")
+	gitExec(t, other, "add", ".")
+	gitExec(t, other, "commit", "-m", "next")
+	second := gitExec(t, other, "rev-parse", "HEAD")
+	gitExec(t, other, "push", "origin", "main")
+	gitExec(t, other, "tag", "-f", "stable")
+	gitExec(t, other, "push", "--force", "origin", "refs/tags/stable")
+
+	// Forward move replaces the stale local tag.
+	require.NoError(t, FetchTag("origin", "stable"))
+	got, err := RevParse("refs/tags/stable")
+	require.NoError(t, err)
+	assert.Equal(t, second, got)
+
+	// Rolling the tag back to an ancestor is also picked up.
+	gitExec(t, other, "tag", "-f", "stable", first)
+	gitExec(t, other, "push", "--force", "origin", "refs/tags/stable")
+	require.NoError(t, FetchTag("origin", "stable"))
+	got, err = RevParse("refs/tags/stable")
+	require.NoError(t, err)
+	assert.Equal(t, first, got)
+}
+
+func TestIntegration_FetchTag_Missing(t *testing.T) {
+	_, cloneDir := setupBareAndClone(t)
+	restore := withGitDir(t, cloneDir)
+	defer restore()
+
+	err := FetchTag("origin", "nope")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrRemoteRefNotFound)
+}

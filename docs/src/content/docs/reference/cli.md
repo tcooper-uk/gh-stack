@@ -77,6 +77,7 @@ gh stack init [flags] [branches...]
 | Flag | Description |
 |------|-------------|
 | `-b, --base <branch>` | Trunk branch for the stack (defaults to the repository's default branch) |
+| `--base-ref <ref>` | Tag or branch to start from instead of the trunk head (defaults to `git config gh-stack.base-ref`). See [Rebasing onto a stable ref](/gh-stack/guides/workflows/#rebasing-onto-a-stable-ref) |
 
 Initializes a new stack locally. In interactive mode (no arguments), prompts for a branch name and offers to use the current branch as the first layer.
 
@@ -386,6 +387,7 @@ gh stack sync [flags]
 | `--remote <name>` | Remote to fetch from and push to (defaults to auto-detected remote) |
 | `--prune` | Delete local branches for merged PRs |
 | `--accept-base-change` | Rebase onto a base GitHub retargeted the stack to, even if the old base did not merge |
+| `--base-ref <ref>` | Tag or branch to rebase onto instead of the trunk head (defaults to `git config gh-stack.base-ref`). Skips the trunk fast-forward. See [Rebasing onto a stable ref](/gh-stack/guides/workflows/#rebasing-onto-a-stable-ref) |
 | `--no-atomic` | Allow partial branch updates |
 
 Performs a synchronization of the entire stack:
@@ -437,6 +439,7 @@ gh stack rebase [flags] [branch]
 | `--downstack` | Only rebase branches from trunk to the current branch |
 | `--upstack` | Only rebase branches from the current branch to the top |
 | `--no-trunk` | Skip trunk — only rebase stack branches onto each other (no fetch, no trunk rebase) |
+| `--base-ref <ref>` | Tag or branch to rebase onto instead of the trunk head (defaults to `git config gh-stack.base-ref`). Cannot be combined with `--no-trunk`. See [Rebasing onto a stable ref](/gh-stack/guides/workflows/#rebasing-onto-a-stable-ref) |
 | `--accept-base-change` | Rebase onto a base GitHub retargeted the stack to, even if the old base did not merge (see [`gh stack sync`](#gh-stack-sync)) |
 | `--continue` | Continue the rebase after resolving conflicts |
 | `--abort` | Abort the rebase and restore all branches to their pre-rebase state |

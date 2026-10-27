@@ -287,6 +287,36 @@ To preserve author dates as committer dates, start with `gh stack rebase --commi
 
 `gh stack push` uses `--force-with-lease` to safely update the rebased branches. This is a safe form of force push — it ensures you don't overwrite changes that someone else pushed since your last fetch. If the remote has unexpected changes, the push is rejected and you can investigate.
 
+### Rebasing onto a stable ref
+
+By default, `gh stack rebase` and `gh stack sync` rebase the bottom of the stack onto the head of the trunk branch. Teams that keep a "known good" tag or branch behind the trunk head, such as a `stable` tag moved to each trunk commit once it passes CI, usually want new work to start from there, so that a bad trunk commit does not fail every new PR.
+
+Set a **base ref** to do that:
+
+```sh
+# Once per clone: use the stable tag for every stack
+git config gh-stack.base-ref refs/tags/stable
+
+gh stack init my-feature        # the first branch is created from the tag
+gh stack sync                   # fetches the tag and rebases the stack onto it
+gh stack submit                 # PRs still target the trunk branch
+
+# Or for a single run
+gh stack rebase --base-ref refs/tags/stable
+```
+
+The `--base-ref` flag on `init`, `rebase` and `sync` takes precedence over the config value. A base ref can be a full ref (`refs/tags/stable`, `refs/heads/stable`), a remote-qualified branch (`origin/stable`), or a bare name that exists on the remote as either a tag or a branch; if it is both, use the full ref.
+
+With a base ref:
+
+- The ref is fetched from the remote each time. A tag is force-updated, so a local tag of the same name is replaced.
+- The ref may move backwards, for example when `stable` is rolled back. The stack is moved onto the new position, and commits between the two are dropped from the stack.
+- Local trunk is not fast-forwarded, and pull requests still target the trunk branch.
+- If a PR in the stack has merged but its commit is not yet in the base ref, the remaining branches are still rebased onto the base ref. The merged change arrives once the ref catches up.
+- `gh stack modify` does not support base refs yet and stops while `gh-stack.base-ref` is set.
+
+Pull request CI usually runs on a merge of the PR with the current head of the trunk, so a bad trunk commit can still affect PR checks. A base ref changes what your branches are built on, not what CI merges them with.
+
 ### Rebase from the CLI vs. the web UI
 
 You can rebase stack branches from either the CLI or the GitHub web UI, but they behave differently:

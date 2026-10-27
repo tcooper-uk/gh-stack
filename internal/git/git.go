@@ -363,6 +363,23 @@ func ClearRemote() error {
 	return ops.ClearRemote()
 }
 
+// ConfiguredBaseRef returns the gh-stack.base-ref git config value, or "" when
+// it is unset.
+func ConfiguredBaseRef() (string, error) {
+	return ops.ConfiguredBaseRef()
+}
+
+// ClassifyRemoteRef reports whether name exists on the remote as a tag, a
+// branch, both, or neither.
+func ClassifyRemoteRef(remote, name string) (RemoteRefKind, error) {
+	return ops.ClassifyRemoteRef(remote, name)
+}
+
+// FetchTag force-fetches one tag from the remote into refs/tags.
+func FetchTag(remote, tag string) error {
+	return ops.FetchTag(remote, tag)
+}
+
 // RebaseOnto rebases a branch using the three-argument form:
 //
 //	git rebase --onto <newBase> <oldBase> <branch>
